@@ -8,3 +8,4 @@ requests
 locust
 streamlit
 pytest
+httpx

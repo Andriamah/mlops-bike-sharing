@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="API de Prédiction Bike Sharing", version="1.0")
 
+# 1. Schéma de validation des données d'entrée
 class BikeFeatures(BaseModel):
     season: int
     yr: int
@@ -26,6 +27,12 @@ class BikeFeatures(BaseModel):
     hum: float
     windspeed: float
 
+# 2. Schéma pour le feedback
+class Feedback(BaseModel):
+    prediction_id: str
+    real_value: float
+
+# 3. Chargement du modèle depuis MLflow
 MODEL_URI = "models:/BikeSharingModel/latest"
 try:
     logging.info(f"Chargement du modèle depuis {MODEL_URI}...")
@@ -35,7 +42,7 @@ except Exception as e:
     logging.error(f"Erreur de chargement du modèle : {e}")
     model = None
 
-# Fonction pour sauvegarder les traces (La boîte noire)
+# 4. Fonction pour sauvegarder les traces (La boîte noire)
 def log_prediction(input_data, prediction, duration, error=None):
     log_entry = {
         "timestamp": datetime.now().isoformat(),
@@ -45,7 +52,6 @@ def log_prediction(input_data, prediction, duration, error=None):
         "duration_ms": round(duration * 1000, 2),
         "error": error
     }
-    # On écrit dans un fichier JSONL (JSON Lines)
     with open("predictions.log", "a") as f:
         f.write(json.dumps(log_entry) + "\n")
 
@@ -60,18 +66,18 @@ def predict(data: BikeFeatures):
     
     if model is None:
         duration = time.time() - start_time
-        log_prediction(data.dict(), None, duration, error="Model not loaded")
+        log_prediction(data.model_dump(), None, duration, error="Model not loaded")
         raise HTTPException(status_code=503, detail="Le modèle n'est pas disponible.")
     
-    input_df = pd.DataFrame([data.dict()])
+    # Utilisation de model_dump() pour Pydantic V2
+    input_df = pd.DataFrame([data.model_dump()])
     
     try:
         prediction = model.predict(input_df)[0]
         prediction_val = round(float(prediction), 2)
         
         duration = time.time() - start_time
-        # On enregistre la prédiction réussie
-        log_prediction(data.dict(), prediction_val, duration)
+        log_prediction(data.model_dump(), prediction_val, duration)
         
         return {
             "prediction": prediction_val,
@@ -80,16 +86,11 @@ def predict(data: BikeFeatures):
         }
     except Exception as e:
         duration = time.time() - start_time
-        log_prediction(data.dict(), None, duration, error=str(e))
+        log_prediction(data.model_dump(), None, duration, error=str(e))
         raise HTTPException(status_code=500, detail=str(e))
-
-class Feedback(BaseModel):
-    prediction_id: str  # On utilisera le timestamp comme ID
-    real_value: float
 
 @app.post("/feedback")
 def receive_feedback(data: Feedback):
-    # On enregistre le feedback dans un fichier séparé
     feedback_entry = {
         "timestamp": datetime.now().isoformat(),
         "prediction_id": data.prediction_id,
